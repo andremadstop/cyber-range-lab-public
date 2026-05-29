@@ -1,0 +1,9 @@
+---
+# 11-target-vault.yml — Vault-Zielsystem (10.99.10.3)
+# Installiert Vaultwarden mit schwachem Master-PW + Trophy-Secret
+# fuer Red-Team Angriffspfad: Password-Cracking, Credential-Access
+- name: Vault-Target einrichten
+  hosts: vault-target
+  become: yes
+  roles:
+    - trophy-vault

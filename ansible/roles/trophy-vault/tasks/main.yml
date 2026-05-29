@@ -1,0 +1,96 @@
+---
+# Role: trophy-vault
+# Installiert Vaultwarden mit schwachem Master-PW
+# und einem Trophy-Secret (SSH-Key fuer linux-victim)
+# auf vault-target (10.99.10.3)
+
+- name: Docker-Abhängigkeiten installieren
+  apt:
+    name:
+      - docker.io
+      - docker-compose-v2
+      - python3-docker
+    state: present
+    update_cache: yes
+
+- name: Docker-Dienst aktivieren
+  systemd:
+    name: docker
+    enabled: yes
+    state: started
+
+- name: Vaultwarden-Verzeichnis anlegen
+  file:
+    path: "/opt/vaultwarden"
+    state: directory
+    owner: root
+    group: root
+    mode: 0755
+
+- name: Admin-Token fuer Vaultwarden generieren
+  set_fact:
+    vault_admin_token: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+
+- name: Vaultwarden Docker-Compose bereitstellen
+  copy:
+    dest: "/opt/vaultwarden/docker-compose.yml"
+    content: |
+      services:
+        vaultwarden:
+          image: vaultwarden/server:latest
+          container_name: vaultwarden
+          restart: unless-stopped
+          ports:
+            - "10.99.10.3:8443:80"
+          environment:
+            ADMIN_TOKEN: {{ vault_admin_token }}
+            SIGNUPS_ALLOWED: "true"
+            DOMAIN: "http://10.99.10.3:8443"
+          volumes:
+            - vw_data:/data
+      volumes:
+        vw_data:
+    mode: 0644
+
+- name: Vaultwarden starten
+  command:
+    cmd: docker compose up -d
+    chdir: /opt/vaultwarden
+  register: vw_up
+  changed_when: "'Started' in vw_up.stdout or 'Container' in vw_up.stdout"
+  failed_when: false
+
+- name: Auf Vaultwarden warten
+  uri:
+    url: "http://10.99.10.3:8443"
+    status_code: 200
+    timeout: 120
+  register: vw_check
+  retries: 10
+  delay: 6
+  until: vw_check.status == 200
+  ignore_errors: yes
+
+- name: Trophy-Secret anlegen (SSH-Key fuer linux-victim)
+  copy:
+    dest: "/opt/vaultwarden/trophy-ssh-key-linux-victim.txt"
+    content: |
+      === TROPHY: SSH-Key fuer linux-victim (10.99.10.4) ===
+      User: root
+      Passwort: Top-1000-Liste (siehe Hinweis im Briefing)
+      Hinweis: Das Master-PW des Vaultwarden ist in den Top-1000
+      der haeufigsten Passwoerter. Bruteforce-Tool: hydra oder
+      hashcat mit rockyou.txt geschnitten auf 1000 Zeilen.
+    mode: 0644
+
+- name: Schwaches Master-PW dokumentieren
+  copy:
+    dest: "/opt/vaultwarden/weak-master-password.txt"
+    content: |
+      === SCHWACHES MASTER-PASSWORT (NICHT AENDERN) ===
+      Das Vaultwarden-Master-Passwort ist eines der Top-1000-Passwoerter.
+      Konkrete Auswahl: "password123" (Position ~4 in rockyou-top1000)
+      Enthaelt den SSH-Key fuer linux-victim als Trophy-Item.
+      Spieler muessen via Hash-Extraktion + Offline-Crack oder
+      Rate-Angriff das Master-PW kompromittieren.
+    mode: 0644

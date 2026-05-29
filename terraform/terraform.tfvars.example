@@ -1,0 +1,22 @@
+# Cyber-Range-Lab — Beispiel-Variablen-Datei
+# Kopiere nach terraform.tfvars und fülle aus:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# WARNUNG: terraform.tfvars ist in .gitignore — niemals Tokens committen!
+
+# Hetzner Cloud API-Token (Projekt "cyber-range-lab", Scope: read+write)
+# Erzeugen via Hetzner Console → Project → Security → API Tokens
+hcloud_token = "DEIN_HCLOUD_TOKEN_HIER"
+
+# Teamgrößen (Default: 4 Red, 3 Blue → 13 Server)
+# team_size_red  = 4
+# team_size_blue = 3
+
+# Lab-Lebensdauer in Stunden (Default: 48 = Wochenend-Event)
+# lab_lifetime_hours = 48
+
+# SSH-Keys (müssen im Hetzner-Projekt hinterlegt sein)
+# ssh_keys = ["dein-key-name", "zweiter-key"]
+
+# Hetzner-Standort (Default: fsn1 = Falkenstein)
+# location = "fsn1"

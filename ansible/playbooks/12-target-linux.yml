@@ -1,0 +1,9 @@
+---
+# 12-target-linux.yml — Linux-Victim (10.99.10.4)
+# Installiert SUID-Binary, Cron-Misconfig, Trophy + Mailhog
+# fuer Red-Team Angriffspfade: Privilege Escalation, Persistence, Exfiltration
+- name: Linux-Victim einrichten
+  hosts: linux-victim
+  become: yes
+  roles:
+    - sudo-misconfig

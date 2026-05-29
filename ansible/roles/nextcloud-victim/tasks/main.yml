@@ -1,0 +1,270 @@
+---
+# Role: nextcloud-victim
+# Installiert Nextcloud mit verwundbarer Konfiguration + Dummy-Kundendaten
+# auf nc-target (10.99.10.5)
+# Angriffspfad: Nextcloud-Admin-Brute-Force -> Kundendaten-Exfil -> Phishing-Daten
+#
+# Verwundbarkeiten:
+# - Admin-Passwort: Top-1000 (123456789)
+# - Nextcloud-Version 28.0.0 (manuelles Upgrade deaktiviert)
+# - Brute-Force-Schutz deaktiviert (config.php-Anpassung)
+# - Datei-Sharing ohne Passwortschutz aktiviert
+
+- name: Docker-Abhängigkeiten installieren
+  apt:
+    name:
+      - docker.io
+      - docker-compose-v2
+      - python3-docker
+    state: present
+    update_cache: yes
+
+- name: Docker-Dienst aktivieren
+  systemd:
+    name: docker
+    enabled: yes
+    state: started
+
+- name: NC-Target-Verzeichnis anlegen
+  file:
+    path: "/opt/nextcloud"
+    state: directory
+    owner: root
+    group: root
+    mode: 0755
+
+- name: Admin-Passwort generieren (pwgen, nicht committed)
+  set_fact:
+    nc_admin_password: "{{ lookup('password', '/dev/null length=12 chars=ascii_letters,digits') }}"
+
+- name: Admin-Passwort in .env-Datei schreiben (gitignored)
+  copy:
+    dest: "/opt/nextcloud/.env"
+    content: |
+      NC_ADMIN_PASSWORD={{ nc_admin_password }}
+    mode: 0600
+
+- name: Zugangsdaten-Datei schreiben (gitignored)
+  copy:
+    dest: "/opt/nextcloud/credentials.txt"
+    content: |
+      === NC-TARGET ZUGANGSDATEN (PILOT) ===
+      URL:      http://10.99.10.5:8090
+      Admin:    admin
+      Passwort: {{ nc_admin_password }}
+      
+      Enthaelt Dummy-Kundendaten als Trophy.
+      Brute-Force-Schutz ist deaktiviert.
+      Passwort ist Top-1000-Liste (fuer Demo)/pwgen (fuer Produktion).
+    mode: 0600
+
+- name: Nextcloud + MariaDB Docker-Compose bereitstellen
+  copy:
+    dest: "/opt/nextcloud/docker-compose.yml"
+    content: |
+      services:
+        nc-mariadb:
+          image: mariadb:10.11
+          container_name: nc-mariadb
+          restart: unless-stopped
+          environment:
+            MYSQL_ROOT_PASSWORD: nc_root_secret
+            MYSQL_DATABASE: nextcloud
+            MYSQL_USER: nextcloud
+            MYSQL_PASSWORD: nc_db_pass
+          volumes:
+            - nc_db:/var/lib/mysql
+
+        nc-nextcloud:
+          image: nextcloud:28.0.0-apache
+          container_name: nc-nextcloud
+          restart: unless-stopped
+          ports:
+            - "10.99.10.5:8090:80"
+          environment:
+            MYSQL_HOST: nc-mariadb
+            MYSQL_DATABASE: nextcloud
+            MYSQL_USER: nextcloud
+            MYSQL_PASSWORD: nc_db_pass
+            NEXTCLOUD_ADMIN_USER: admin
+            NEXTCLOUD_ADMIN_PASSWORD: ${NC_ADMIN_PASSWORD}
+            NEXTCLOUD_TRUSTED_DOMAINS: "10.99.10.5 localhost"
+            OVERWRITEPROTOCOL: http
+            OVERWRITECLIURL: http://10.99.10.5
+          volumes:
+            - nc_data:/var/www/html
+            - ./config.php.override:/var/www/html/config/config.php.override
+          depends_on:
+            - nc-mariadb
+
+      volumes:
+        nc_db:
+        nc_data:
+    mode: 0644
+
+- name: Vulnerable config.php erstellen (Brute-Force-Schutz deaktiviert)
+  copy:
+    dest: "/opt/nextcloud/config.php.override"
+    content: |
+      <?php
+      $CONFIG = [
+        'overwriteprotocol' => 'http',
+        'overwritewebroot' => '/',
+        'overwrite.cli.url' => 'http://10.99.10.5:8090',
+        'trusted_domains' => ['10.99.10.5', 'localhost', '10.99.10.5:8090'],,
+        'default_phone_region' => 'DE',
+        'password_policy.min_length' => 1,
+        'password_policy.enforce_numeric_chars' => false,
+        'password_policy.enforce_special_chars' => false,
+        'password_policy.enforce_upper_lower_case' => false,
+        'bruteforce_protection.enabled' => false,
+        'shareapi_default_permissions' => 31,
+        'allow_user_to_change_display_name' => true,
+        'shareapi_allow_public_upload' => true,
+        'shareapi_allow_public_link_sharing' => true,
+        'shareapi_allow_public_link_mail' => true,
+        'shareapi_default_expire_date' => false,
+        'lost_password_link' => 'disabled',
+        'enable_previews' => false,
+        'enable_file_metadata' => false,
+      ];
+    mode: 0644
+
+- name: Nextcloud + MariaDB starten
+  command:
+    cmd: docker compose up -d
+    chdir: /opt/nextcloud
+  register: nc_up
+  changed_when: "'Started' in nc_up.stdout or 'Container' in nc_up.stdout"
+  failed_when: false
+
+- name: Auf Nextcloud warten
+  uri:
+    url: "http://10.99.10.5:8090"
+    status_code: 200,302
+    timeout: 120
+  register: nc_check
+  retries: 15
+  delay: 6
+  until: nc_check.status == 200 or nc_check.status == 302
+  ignore_errors: yes
+
+- name: Dummy-Kundendaten-Verzeichnis anlegen
+  file:
+    path: "/opt/nextcloud/dummy-data"
+    state: directory
+    owner: root
+    group: root
+    mode: 0755
+
+- name: Dummy-Kundendaten-Verzeichnis — intern/
+  file:
+    path: "/opt/nextcloud/dummy-data/intern"
+    state: directory
+    owner: root
+    group: root
+    mode: 0755
+
+- name: Dummy-Kundendaten — Rechnungen (CSV)
+  copy:
+    dest: "/opt/nextcloud/dummy-data/rechnungen.csv"
+    content: |
+      Rechnungs-Nr;Datum;Kunde;Betrag;Status
+      RE-2025-001;2025-01-15;Mustermann GmbH;1.247,50 EUR;bezahlt
+      RE-2025-002;2025-02-03;Schmidt KG;3.891,20 EUR;bezahlt
+      RE-2025-003;2025-02-28;Weber & Söhne;856,00 EUR;offen
+      RE-2025-004;2025-03-12;THW Kiel e.V.;5.200,00 EUR;bezahlt
+      RE-2025-005;2025-03-30;Müller Hdl.;412,80 EUR;offen
+      RE-2025-006;2025-04-05;Bürgerdienst Stadt N.;12.450,00 EUR;bezahlt
+      RE-2025-007;2025-04-22;IT Solutions AG;3.450,00 EUR;offen
+      RE-2025-008;2025-05-01;Liebhaber Feinbäckerei;682,30 EUR;bezahlt
+      RE-2025-009;2025-05-15;Praxis Dr. Vogel;2.340,00 EUR;bezahlt
+      RE-2025-010;2025-05-28;Handwerksbetrieb Klein;1.890,00 EUR;offen
+    mode: 0644
+
+- name: Dummy-Kundendaten — Personalakte (CSV)
+  copy:
+    dest: "/opt/nextcloud/dummy-data/mitarbeiter.csv"
+    content: |
+      Personalnr;Name;Position;Gehalt;Geburtsdatum;Telefon;Email
+      P001;Erika Mustermann;Geschäftsführerin;85.000 EUR;12.03.1975;0170-1234567;e.mustermann@firma.test
+      P002;Max Schmidt;IT-Leiter;72.000 EUR;28.07.1982;0171-2345678;m.schmidt@firma.test
+      P003;Laura Weber;Buchhaltung;48.000 EUR;15.11.1991;0172-3456789;l.weber@firma.test
+      P004;Tom Klein;Vertrieb;52.000 EUR;03.05.1988;0173-4567890;t.klein@firma.test
+      P005;Svenja Müller;Marketing;45.000 EUR;22.09.1995;0174-5678901;s.mueller@firma.test
+      P006;Oliver Wagner;Entwicklung;65.000 EUR;07.01.1985;0175-6789012;o.wagner@firma.test
+      P007;Nina Köhler;HR;44.000 EUR;19.06.1993;0176-7890123;n.koehler@firma.test
+    mode: 0644
+
+- name: Dummy-Kundendaten — Vertraege (CSV)
+  copy:
+    dest: "/opt/nextcloud/dummy-data/vertraege.csv"
+    content: |
+      Vertrags-Nr;Kunde;Leistung;Laufzeit;Monatlich;Status
+      VT-2024-001;THW Kiel e.V.;IT-Infrastruktur-Management;24 Monate;3.200,00 EUR;aktiv
+      VT-2024-002;Stadt N.;Bürgerportal-Hosting;12 Monate;8.500,00 EUR;aktiv
+      VT-2024-003;Praxis Dr. Vogel;Patientenverwaltung;36 Monate;1.200,00 EUR;aktiv
+      VT-2024-004;IT Solutions AG;Cloud-Migration;6 Monate;4.800,00 EUR;aktiv
+      VT-2024-005;Bürgerdienst Stadt N.;Notfall-Wiederherstellung;12 Monate;1.500,00 EUR;aktiv
+      VT-2025-001;Handwerksbetrieb Klein;Firewall-Management;24 Monate;890,00 EUR;aktiv
+    mode: 0644
+
+- name: Dummy-Kundendaten — Phishing-Log (CSV, TROPHY)
+  copy:
+    dest: "/opt/nextcloud/dummy-data/phishing-log.csv"
+    content: |
+      Datum;Ziel;Mail-Adresse;Geklickter-Link;Preisgegebene-Daten
+      2025-04-12;Max Schmidt;m.schmidt@firma.test;https://firma-test.login-update.xyz;NC-Login: admin / 123456789
+      2025-05-03;Laura Weber;l.weber@firma.test;https://firma-test.secure-doc.xyz;NC-Login: admin / 123456789
+      2025-05-18;Tom Klein;t.klein@firma.test;https://firma-test.rechnung.xyz;NC-Login: admin / 123456789
+    mode: 0644
+
+- name: Dummy-Kundendaten — passwoerter.xlsx (Honeypot, TROPHY)
+  copy:
+    dest: "/opt/nextcloud/dummy-data/intern/passwoerter.xlsx.txt"
+    content: |
+      === HONEYPOT: Fake-Credentials (passwoerter.xlsx) ===
+      Diese Datei simuliert eine Excel-Tabelle mit gestohlenen Zugangsdaten.
+      
+      Benutzer     Passwort          Ziel
+      ----------------------------------------------------------
+      admin        Sunsh1ne2024!     Nextcloud-Admin (falsch)
+      root        P@ssw0rd2025      linux-victim (FALSCH — echter Zugriff via SSH-Key)
+      backup_user   B4ckupS3rv!     Backup-Server
+      monitoring   M0n1t0r2024      Grafana
+      mailadmin    M4ilR00t!2025    Mail-Server
+      
+      Hinweis: Einer dieser Eintraege ist echt — aber welcher?
+    mode: 0644
+
+- name: Dummy-Kundendaten — Trophy-File (FLAG-kundendaten.txt)
+  copy:
+    dest: "/opt/nextcloud/dummy-data/intern/FLAG-kundendaten.txt"
+    content: |
+      =============================================
+      TROPHY: KUNDENDATEN-EXFILTRATION ERFOLGREICH
+      =============================================
+      
+      Team: <Team-Name eintragen>
+      Exfiltrierte Datenmenge: <Anzahl Dateien>
+      Erbeutete Datensaetze: ~50 Kunden, ~20 Rechnungen, ~10 Vertraege
+      
+      FLAG-ID: CRL-NC-EXFIL-2026-001
+      Datum: <Datum>
+      
+      Dieses Flag bestaetigt den erfolgreichen Daten-Exfil aus Nextcloud.
+    mode: 0644
+
+- name: Hinweis auf Admin-Zugangsdaten aktualisieren
+  copy:
+    dest: "/opt/nextcloud/credentials.txt"
+    content: |
+      === NC-TARGET ZUGANGSDATEN (PILOT) ===
+      URL:      http://10.99.10.5:8090
+      Admin:    admin
+      
+      Passwort: Siehe /opt/nextcloud/.env (root-only)
+      
+      Enthaelt Dummy-Kundendaten als Trophy.
+      Brute-Force-Schutz ist deaktiviert.
+    mode: 0600

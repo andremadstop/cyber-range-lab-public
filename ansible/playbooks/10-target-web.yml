@@ -1,0 +1,9 @@
+---
+# 10-target-web.yml — Web-Zielsystem (10.99.10.2)
+# Installiert WordPress 5.4 + Slider Revolution 4.1 + Juice Shop
+# fuer Red-Team Angriffspfade: SQLi, RCE, File-Upload
+- name: Web-Target einrichten
+  hosts: web-target
+  become: yes
+  roles:
+    - vulnerable-wordpress

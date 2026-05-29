@@ -1,0 +1,240 @@
+---
+# 22-wazuh-rules.yml — Custom-Detection-Rules (L1-L4)
+# deployed auf Wazuh-Manager unter /var/ossec/etc/rules/custom/
+# Regel-IDs: 100000-100999 (Custom-Range, nicht mit Standard-Rules kollidierend)
+- name: Custom-Rules-Verzeichnis anlegen
+  file:
+    path: "/var/ossec/etc/rules/custom"
+    state: directory
+    owner: root
+    group: ossec
+    mode: 0750
+
+# === L1: Brute-Force Detection via SSH-Logs ===
+- name: SSH-Brute-Force-Rule deployed
+  copy:
+    dest: "/var/ossec/etc/rules/custom/100010-ssh-brute.xml"
+    owner: root
+    group: ossec
+    mode: 0640
+    content: |
+      <group name="ssh, brute-force, authentication">
+        <!-- L1: SSH-Brute-Force > 5 Fehlversuche in 60s -->
+        <rule id="100010" level="10" frequency="5" timeframe="60" ignore="30">
+          <if_matched_sid>5710</if_matched_sid>
+          <description>CRL-L1: SSH-Brute-Force erkannt (>5 Fehlversuche in 60s)</description>
+          <mitre>
+            <id>T1110</id>
+          </mitre>
+        </rule>
+
+        <!-- L1: SSH-Success nach Brute-Force (Korrelation) -->
+        <rule id="100011" level="12" frequency="5" timeframe="120">
+          <field name="location">/var/log/auth.log</field>
+          <match>Accepted password for root</match>
+          <description>CRL-L1: SSH-Login nach Brute-Force (erfolgreich)</description>
+          <mitre>
+            <id>T1078</id>
+          </mitre>
+        </rule>
+      </group>
+
+# === L1: Web-Brute-Force (HTTP 401-Spike) ===
+- name: HTTP-Brute-Force-Rule deployed
+  copy:
+    dest: "/var/ossec/etc/rules/custom/100020-web-brute.xml"
+    owner: root
+    group: ossec
+    mode: 0640
+    content: |
+      <group name="web, brute-force">
+        <rule id="100020" level="8" frequency="10" timeframe="60" ignore="10">
+          <if_group>web</if_group>
+          <match>401 Unauthorized</match>
+          <description>CRL-L1: HTTP-Brute-Force-Spike (>10 401 in 60s)</description>
+          <mitre>
+            <id>T1110</id>
+          </mitre>
+        </rule>
+      </group>
+
+# === L2: SQL-Injection Detection ===
+- name: SQLi-Detection-Rule deployed
+  copy:
+    dest: "/var/ossec/etc/rules/custom/100030-sqli.xml"
+    owner: root
+    group: ossec
+    mode: 0640
+    content: |
+      <group name="web, sqli">
+        <rule id="100030" level="10">
+          <if_group>web</if_group>
+          <match>union select|SELECT.*FROM|1=1|' OR 1=1|admin'--|sqlmap|%27%20OR%20|%3B%20DROP|information_schema</match>
+          <description>CRL-L2: SQL-Injection-Versuch erkannt</description>
+          <mitre>
+            <id>T1190</id>
+          </mitre>
+        </rule>
+      </group>
+
+# === L2: File-Inclusion (LFI/RFI) Detection ===
+- name: LFI-Rule deployed
+  copy:
+    dest: "/var/ossec/etc/rules/custom/100040-lfi.xml"
+    owner: root
+    group: ossec
+    mode: 0640
+    content: |
+      <group name="web, lfi">
+        <rule id="100040" level="8">
+          <if_group>web</if_group>
+          <match>\.\./|\.\.%2f|/etc/passwd|/proc/self|/var/log|php://filter|php://input</match>
+          <description>CRL-L2: LFI/RFI-Versuch erkannt</description>
+          <mitre>
+            <id>T1190</id>
+          </mitre>
+        </rule>
+      </group>
+
+# === L3: SUID-Binary Execution (Privilege Escalation) ===
+- name: SUID-Privesc-Rule deployed
+  copy:
+    dest: "/var/ossec/etc/rules/custom/100050-suid.xml"
+    owner: root
+    group: ossec
+    mode: 0640
+    content: |
+      <group name="host, suid, privilege-escalation">
+        <rule id="100050" level="10">
+          <if_group>audit</if_group>
+          <match>/usr/local/bin/suid-helper|/usr/bin/find.*4755</match>
+          <description>CRL-L3: SUID-Binary Execution (Privilege-Escalation)</description>
+          <mitre>
+            <id>T1548</id>
+          </mitre>
+        </rule>
+      </group>
+
+# === L3: Cron-Persistence Detection ===
+- name: Cron-Persistence-Rule deployed
+  copy:
+    dest: "/var/ossec/etc/rules/custom/100060-cron.xml"
+    owner: root
+    group: ossec
+    mode: 0640
+    content: |
+      <group name="host, persistence, cron">
+        <rule id="100060" level="8">
+          <if_group>ossec</if_group>
+          <match>/etc/cron.d|/var/spool/cron|crontab</match>
+          <description>CRL-L3: Cron-Persistence detektiert (Aenderung an Crontab)</description>
+          <mitre>
+            <id>T1053</id>
+          </mitre>
+        </rule>
+
+        <rule id="100061" level="12" frequency="3" timeframe="600">
+          <field name="location">/var/log/auth.log</field>
+          <match>Accepted publickey for root</match>
+          <description>CRL-L3: SSH-Key-Persistence (neuer SSH-Key deployed)</description>
+          <mitre>
+            <id>T1098</id>
+          </mitre>
+        </rule>
+      </group>
+
+# === L4: Lateral Movement (SSH von neuer Quelle) ===
+- name: Lateral-Movement-Rule deployed
+  copy:
+    dest: "/var/ossec/etc/rules/custom/100070-lateral.xml"
+    owner: root
+    group: ossec
+    mode: 0640
+    content: |
+      <group name="lateral-movement, ssh">
+        <rule id="100070" level="10">
+          <if_group>authentication_success</if_group>
+          <match>Accepted</match>
+          <description>CRL-L4: Potenzielles Lateral Movement — SSH von neuer Quelle</description>
+          <mitre>
+            <id>T1021</id>
+          </mitre>
+          <options>no_full_log</options>
+        </rule>
+      </group>
+
+# === L4: DNS-Tunneling Detection ===
+- name: DNS-Exfil-Rule deployed
+  copy:
+    dest: "/var/ossec/etc/rules/custom/100080-dns-exfil.xml"
+    owner: root
+    group: ossec
+    mode: 0640
+    content: |
+      <group name="exfiltration, dns">
+        <rule id="100080" level="12" frequency="50" timeframe="60">
+          <if_group>dns</if_group>
+          <match>\.example\.com|\.tunnel\.|\.exfil\.</match>
+          <description>CRL-L4: DNS-Tunneling — ungewoehnlich viele DNS-Queries</description>
+          <mitre>
+            <id>T1048</id>
+          </mitre>
+        </rule>
+      </group>
+
+# === Nextcloud: NC-Brute-Force (L1/L2) ===
+- name: NC-Brute-Force-Rule deployed
+  copy:
+    dest: "/var/ossec/etc/rules/custom/100090-nc-brute.xml"
+    owner: root
+    group: ossec
+    mode: 0640
+    content: |
+      <group name="web, nextcloud, brute-force">
+        <rule id="100090" level="10" frequency="10" timeframe="60" ignore="30">
+          <if_group>web</if_group>
+          <match>/login|/apps/user_ldap|/ocs/v1|/ocs/v2</match>
+          <description>CRL-L1: Nextcloud-Brute-Force (>10 Login-Versuche in 60s)</description>
+          <mitre>
+            <id>T1110</id>
+          </mitre>
+        </rule>
+      </group>
+
+# === Nextcloud: Exploit-Versuche (L2) ===
+- name: NC-Exploit-Rule deployed
+  copy:
+    dest: "/var/ossec/etc/rules/custom/100091-nc-exploit.xml"
+    owner: root
+    group: ossec
+    mode: 0640
+    content: |
+      <group name="web, nextcloud, exploit">
+        <rule id="100091" level="10">
+          <if_group>web</if_group>
+          <match>/ocs/v2.php/apps/user_status|/ocs/v1/identityproof|/ocs/v2/identityproof|/apps/cloud_federation_api</match>
+          <description>CRL-L2: Nextcloud-Exploit-Versuch (Identity-Proof / Status-Abfrage)</description>
+          <mitre>
+            <id>T1190</id>
+          </mitre>
+        </rule>
+      </group>
+
+# === Nextcloud: Massen-Exfiltration (L4) ===
+- name: NC-Exfil-Rule deployed
+  copy:
+    dest: "/var/ossec/etc/rules/custom/100092-nc-exfil.xml"
+    owner: root
+    group: ossec
+    mode: 0640
+    content: |
+      <group name="web, nextcloud, exfiltration">
+        <rule id="100092" level="12" frequency="20" timeframe="120">
+          <if_group>web</if_group>
+          <match>/remote.php/dav/files|/remote.php/webdav|/s/</match>
+          <description>CRL-L4: Nextcloud-Massen-Exfiltration (>20 Dateiabrufe in 120s)</description>
+          <mitre>
+            <id>T1048</id>
+          </mitre>
+        </rule>
+      </group>

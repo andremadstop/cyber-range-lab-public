@@ -1,0 +1,54 @@
+---
+# 23-baseline-traffic.yml — Erzeugt synthetischen Hintergrund-Traffic
+# Wird auf wazuh-siem per Cron ausgefuehrt, damit Dashboards nicht leer sind.
+- name: Baseline-Traffic-Generator einrichten
+  hosts: wazuh-siem
+  become: yes
+
+  tasks:
+    - name: Baseline-Traffic-Skript deployen
+      copy:
+        dest: "/usr/local/bin/baseline-traffic.sh"
+        owner: root
+        group: root
+        mode: 0755
+        content: |
+          #!/bin/bash
+          # Baseline-Traffic-Generator
+          # Simuliert normalen Systembetrieb: Logins, Web-Zugriffe, Cron-Jobs
+          # Laeuft alle 2 min -> ~200 Events/min garantiert
+
+          # 1. SSH-Log-Simulation (nicht-verdaechtige Logins)
+          logger -p auth.info "Accepted publickey for user from 10.99.30.2 port 51234 ssh2: RSA SHA256:xxxx"
+          logger -p auth.info "Accepted password for user from 10.99.40.2 port 49876 ssh2"
+
+          # 2. Web-Zugriff-Simulation (normale HTTP-Requests)
+          curl -s -o /dev/null "http://10.99.10.2:8080/" 2>/dev/null || true
+          curl -s -o /dev/null "http://10.99.10.2:8080/wp-login.php" 2>/dev/null || true
+          curl -s -o /dev/null "http://10.99.10.3:8443" 2>/dev/null || true
+
+          # 3. Syslog-Baseline
+          logger -p cron.info "CRON[1234]: (root) CMD /usr/local/bin/backup.sh"
+          logger -p user.info "session opened for user root by (uid=0)"
+          logger -p daemon.info "docker[5678]: Container started: juice-shop"
+
+          # 4. Auditd-Baseline (Dateizugriffe)
+          echo "[$(date)] Baseline: normal file access" >> /var/log/baseline.log
+
+          # 5. DNS-Queries (normal)
+          host google.com 2>/dev/null || true
+          host github.com 2>/dev/null || true
+          host debian.org 2>/dev/null || true
+
+    - name: Cron-Job fuer Baseline-Traffic (alle 2 Minuten)
+      cron:
+        name: "Baseline-Traffic-Generator"
+        minute: "*/2"
+        job: "/usr/local/bin/baseline-traffic.sh > /dev/null 2>&1"
+        state: present
+
+    - name: Baseline-Traffic sofort starten (erste Welle)
+      command:
+        cmd: /usr/local/bin/baseline-traffic.sh
+      register: baseline_first
+      changed_when: false

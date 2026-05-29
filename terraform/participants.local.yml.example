@@ -1,0 +1,53 @@
+# Cyber-Range Pilot-Teilnehmer (Template)
+#
+# WICHTIG: Echte Klarnamen werden in 'participants.local.yml' (gitignored) gepflegt.
+# Dieses Template-File zeigt das Schema fuer Kunden / Open-Source-Nutzer.
+#
+# DSGVO: Klarnamen niemals in committed Files. Honcho-Profile pseudonymisiert.
+
+run:
+  id: example-run
+  date: YYYY-MM-DD
+  duration_hours: 8
+  game_master: alias-andre
+
+teams:
+  red:
+    lead: alias-andre
+    members:
+      - alias-red-1
+      - alias-red-2
+      - alias-red-3
+  blue:
+    lead: alias-blue-1
+    members:
+      - alias-blue-2
+      - alias-blue-3
+      - alias-blue-4
+
+# Pro Mitglied generiert Terraform eine eigene Workstation-VM:
+# - Red: kali-<alias>      (CX22)
+# - Blue: blue-ws-<alias>  (CX22)
+#
+# SSH-Public-Keys werden separat in 'ssh-keys.local.yml' (gitignored) gehalten.
+
+participants:
+  - alias: alias-andre
+    role: red-lead-and-gm
+    onboarding_status: ready
+    skill_level:
+      siem: 3
+      forensics: 2
+      network: 4
+      exploit: 4
+
+  - alias: alias-red-1
+    role: red-member
+    onboarding_status: pending
+    skill_level:
+      siem: 1
+      forensics: 1
+      network: 2
+      exploit: 2
+
+  # ... weitere Teilnehmer ...

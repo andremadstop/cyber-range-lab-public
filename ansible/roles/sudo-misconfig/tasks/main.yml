@@ -1,0 +1,144 @@
+---
+# Role: sudo-misconfig
+# Installiert Linux-Victim (10.99.10.4) mit:
+#   - SUID-Binary (/usr/bin/find -perm 4755)
+#   - Cron-Misconfig
+#   - Trophy-File /opt/secret/flag.txt
+#   - Mailhog (Mail-Interception)
+#   - Apache + auditd (Log-Quellen fuer Wazuh)
+
+- name: System-Pakete installieren
+  apt:
+    name:
+      - apache2
+      - auditd
+      - cron
+      - mailutils
+      - docker.io
+      - docker-compose-v2
+    state: present
+    update_cache: yes
+
+- name: Docker + Dienste aktivieren
+  systemd:
+    name: "{{ item }}"
+    enabled: yes
+    state: started
+  loop:
+    - docker
+    - apache2
+    - auditd
+    - cron
+
+# === VULNERABILITAET 1: SUID-Binary ===
+- name: SUID-Bit auf /usr/bin/find setzen (CVE-basierte Priv-Esc)
+  file:
+    path: /usr/bin/find
+    mode: "4755"
+
+- name: Zusaetzliche SUID-Binaries bereitstellen
+  copy:
+    dest: "/usr/local/bin/suid-helper"
+    content: |
+      #!/bin/bash
+      # SUID-Helfer — erlaubt Dateizugriff als root
+      cat /opt/secret/flag.txt
+    mode: "4755"
+
+# === VULNERABILITAET 2: Cron-Misconfig ===
+- name: Cron-Job mit root-Rechten anlegen
+  copy:
+    dest: "/etc/cron.d/backup-script"
+    content: |
+      # Cron-Misconfig: Backup-Script laeuft alle 5 min als root
+      # Ausnutzbar via Pfad-Hijacking oder Symlink-Angriff
+      */5 * * * * root /usr/local/bin/backup.sh
+    mode: 0644
+
+- name: Backup-Script erstellen (scheinbar harmlos)
+  copy:
+    dest: "/usr/local/bin/backup.sh"
+    content: |
+      #!/bin/bash
+      # Backup-Script — schreibt nach /tmp/backup.log
+      echo "[$(date)] Backup run by $(whoami)" >> /tmp/backup.log
+    mode: 0755
+
+# === VULNERABILITAET 3: Trophy-File ===
+- name: Trophy-Verzeichnis anlegen
+  file:
+    path: "/opt/secret"
+    state: directory
+    owner: root
+    group: root
+    mode: 0700
+
+- name: Trophy-Flag schreiben
+  copy:
+    dest: "/opt/secret/flag.txt"
+    content: |
+      ============================================
+      CYBER-RANGE-LAB — TROPHY
+      ============================================
+      Kategorie: Exfiltration (Phase F)
+      Ziel: Linux-Victim (10.99.10.4)
+      Flagge: CRL{Pr1v3sc_d0n3_3xf1l_n0w}
+      ============================================
+      Hinweis: Dieses File muss via HTTPS-POST oder
+      DNS-Tunneling exfiltriert werden. Azure/C2-Callback
+      zulässig. Exfiltration zaehlt nur bei erfolgreichem
+      Transfer auf ein externes System.
+      ============================================
+    mode: 0600
+
+# === VULNERABILITAET 4: Schwache SSH-Konfiguration ===
+- name: SSH-Konfiguration lockern (erlaubt PW-Auth + Root-Login)
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^{{ item.param }}"
+    line: "{{ item.param }} {{ item.value }}"
+    state: present
+  loop:
+    - { param: "PasswordAuthentication", value: "yes" }
+    - { param: "PermitRootLogin", value: "yes" }
+    - { param: "PubkeyAuthentication", value: "yes" }
+  notify: restart ssh
+
+- name: Schwaches Root-Passwort setzen
+  user:
+    name: root
+    password: "{{ 'toor' | password_hash('sha512') }}"
+
+# === Mailhog fuer Mail-Interception ===
+- name: Mailhog Docker-Compose
+  copy:
+    dest: "/opt/mailhog/docker-compose.yml"
+    content: |
+      services:
+        mailhog:
+          image: mailhog/mailhog:latest
+          container_name: mailhog
+          restart: unless-stopped
+          ports:
+            - "10.99.10.4:8025:8025"
+            - "10.99.10.4:1025:1025"
+    mode: 0644
+
+- name: Mailhog starten
+  command:
+    cmd: docker compose up -d
+    chdir: /opt/mailhog
+  register: mh_up
+  changed_when: "'Started' in mh_up.stdout or 'Container' in mh_up.stdout"
+  failed_when: false
+
+- name: Mailhog-Warteschleife
+  uri:
+    url: "http://10.99.10.4:8025"
+    status_code: 200
+    timeout: 60
+  register: mh_check
+  retries: 5
+  delay: 5
+  until: mh_check.status == 200
+  ignore_errors: yes

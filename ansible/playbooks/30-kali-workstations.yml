@@ -1,0 +1,107 @@
+---
+# 30-kali-workstations.yml — Kali-Linux-Workstations (Red-Team)
+# 1x kali-andre (10.99.30.2) + 3x kali-user-* (10.99.30.3-5)
+# Basis: Debian 12 + Kali-Tools-Installation
+- name: Kali-Workstations einrichten
+  hosts: kali-andre, kali-user
+  become: yes
+  vars:
+    kali_tools_base:
+      - nmap
+      - gobuster
+      - hydra
+      - hashcat
+      - sqlmap
+      - curl
+      - wget
+      - jq
+      - tmux
+      - vim
+      - netcat-openbsd
+      - dirb
+      - nikto
+      - metasploit-framework
+      - exploitdb
+      - seclists
+    kali_extra_packages:
+      - python3-pip
+      - python3-venv
+      - git
+      - openssh-client
+      - dnsutils
+
+  tasks:
+    - name: System aktualisieren
+      apt:
+        update_cache: yes
+        upgrade: dist
+      changed_when: false
+
+    - name: Kali-Tools installieren
+      apt:
+        name: "{{ kali_tools_base + kali_extra_packages }}"
+        state: present
+        update_cache: yes
+      register: tools_install
+      until: tools_install is success
+      retries: 3
+      delay: 5
+
+    - name: Benutzer-Accounts fuer Mitspieler anlegen
+      user:
+        name: "{{ item.name }}"
+        groups: sudo
+        shell: /bin/bash
+        create_home: yes
+        password: "{{ item.pw | password_hash('sha512') }}"
+      loop:
+        - { name: "player1", pw: "CHANGEME_player1" }
+        - { name: "player2", pw: "CHANGEME_player2" }
+        - { name: "player3", pw: "CHANGEME_player3" }
+      when: inventory_hostname.startswith('kali-user')
+
+    - name: MOTD-Banner mit Instruktionen deployen
+      copy:
+        dest: /etc/motd
+        content: |
+          ╔═══════════════════════════════════════════════╗
+          ║     CYBER-RANGE-LAB — RED TEAM WORKSTATION    ║
+          ╠═══════════════════════════════════════════════╣
+          ║ IP: {{ ansible_default_ipv4.address }}         ║
+          ║ Targets:                                      ║
+          ║   web-target    → 10.99.10.2:8080 (WordPress) ║
+          ║   vault-target  → 10.99.10.3:8443 (Vault)    ║
+          ║   linux-victim  → 10.99.10.4 (SSH)           ║
+          ║ Headscale: 100.99.40.3:443                    ║
+          ║                                                ║
+          ║ Good luck. Have phun.                         ║
+          ╚═══════════════════════════════════════════════╝
+        mode: 0644
+
+    - name: TMUX-Konfiguration mit Split-Layout
+      copy:
+        dest: /home/{{ item }}/.tmux.conf
+        content: |
+          set -g default-terminal "screen-256color"
+          set -g mouse on
+          bind | split-window -h
+          bind - split-window -v
+        owner: "{{ item }}"
+        group: "{{ item }}"
+        mode: 0644
+      loop:
+        - root
+        - player1
+        - player2
+        - player3
+      ignore_errors: yes
+
+    - name: SSH-Config fuer Targets optimieren
+      copy:
+        dest: /etc/ssh/ssh_config.d/99-lab-targets.conf
+        content: |
+          Host 10.99.10.*
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+            LogLevel QUIET
+        mode: 0644

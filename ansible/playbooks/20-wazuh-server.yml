@@ -1,0 +1,149 @@
+---
+# 20-wazuh-server.yml — Wazuh 4.7 Single-Node (Manager + Indexer + Dashboard)
+# Zwei Plays: 1) Wazuh-Server-Installation, 2) Custom-Rules-Deployment
+# CX32 (4vCPU/8GB/80GB), IP: 10.99.20.2
+- name: Wazuh-Server installieren (Manager + Indexer + Dashboard)
+  hosts: wazuh-siem
+  become: yes
+  vars:
+    wazuh_version: "4.7.5"
+    wazuh_dir: "/opt/wazuh"
+    dashboard_admin_user: "admin"
+    dashboard_admin_password: "CHANGEME_set_in_your_vault"
+    indexer_admin_password: "CHANGEME_set_in_your_vault"
+
+  tasks:
+    - name: Systemvoraussetzungen installieren
+      apt:
+        name:
+          - curl
+          - wget
+          - gnupg
+          - apt-transport-https
+          - software-properties-common
+          - unzip
+          - jq
+          - python3-pip
+        state: present
+        update_cache: yes
+
+    - name: System-Parameter fuer Wazuh anpassen (vm.max_map_count)
+      command:
+        cmd: sysctl -w vm.max_map_count=262144
+      register: sysctl_map
+      changed_when: "'vm.max_map_count = 262144' in sysctl_map.stdout"
+
+    - name: System-Parameter fuer Wazuh anpassen (fs.file-max)
+      command:
+        cmd: sysctl -w fs.file-max=65535
+      register: sysctl_file
+      changed_when: "'fs.file-max = 65535' in sysctl_file.stdout"
+
+    - name: Sysctl-Werte persistent machen
+      lineinfile:
+        path: /etc/sysctl.conf
+        line: "{{ item }}"
+        state: present
+      loop:
+        - "vm.max_map_count = 262144"
+        - "fs.file-max = 65535"
+
+    - name: Installationsverzeichnis anlegen
+      file:
+        path: "{{ wazuh_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: 0755
+
+    - name: Wazuh-Installations-Assistent herunterladen
+      get_url:
+        url: "https://packages.wazuh.com/4.7/wazuh-install.sh"
+        dest: "{{ wazuh_dir }}/wazuh-install.sh"
+        mode: 0755
+      register: installer_download
+
+    - name: Wazuh-Installer-Konfiguration (config.yml) erstellen
+      copy:
+        dest: "{{ wazuh_dir }}/config.yml"
+        content: |
+          nodes:
+            - name: wazuh-server
+              node_type: master
+            - name: wazuh-indexer
+              node_type: indexer
+            - name: wazuh-dashboard
+              node_type: dashboard
+          indexer:
+            - name: wazuh-indexer
+              ip: "127.0.0.1"
+              node_type: indexer
+          dashboard:
+            - name: wazuh-dashboard
+              ip: "127.0.0.1"
+          masters:
+            - name: wazuh-server
+              ip: "127.0.0.1"
+        mode: 0644
+
+    - name: Wazuh-All-in-One-Installation durchfuehren
+      command:
+        cmd: "{{ wazuh_dir }}/wazuh-install.sh --generate-config-file --config-file {{ wazuh_dir }}/config.yml --wazuh-version {{ wazuh_version }} --dashboard-password {{ dashboard_admin_password }} --indexer-password {{ indexer_admin_password }} --overwrite"
+        chdir: "{{ wazuh_dir }}"
+      register: wazuh_install
+      changed_when: "'Installation completed' in wazuh_install.stdout"
+      failed_when: false
+      async: 600
+      poll: 15
+
+    - name: Wazuh-Dienste-Status pruefen
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - wazuh-manager
+        - wazuh-indexer
+        - wazuh-dashboard
+      register: service_check
+      failed_when: service_check.failed
+      ignore_errors: yes
+
+    - name: Auf Wazuh-API warten
+      uri:
+        url: "https://10.99.20.2:55000"
+        validate_certs: no
+        status_code: [200, 401]
+        timeout: 300
+      register: api_check
+      retries: 15
+      delay: 10
+      until: api_check.status in [200, 401]
+      ignore_errors: yes
+
+    - name: Dashboard-Verfuegbarkeit prüfen
+      uri:
+        url: "https://10.99.20.2:443"
+        validate_certs: no
+        status_code: [200, 302]
+        timeout: 300
+      register: dash_check
+      retries: 15
+      delay: 10
+      until: dash_check.status in [200, 302]
+      ignore_errors: yes
+
+- name: Custom-Rules deployen (L1-L4)
+  hosts: wazuh-siem
+  become: yes
+  tasks:
+    - name: Custom-Rules-Verzeichnis anlegen
+      file:
+        path: "/var/ossec/etc/rules/custom"
+        state: directory
+        owner: root
+        group: ossec
+        mode: 0750
+
+    - name: Custom-Rules aus 22-wazuh-rules.yml bereitstellen
+      include_tasks: "22-wazuh-rules.yml"

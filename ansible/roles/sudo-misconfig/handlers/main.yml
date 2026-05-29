@@ -1,0 +1,6 @@
+---
+# Handler fuer sudo-misconfig Role
+- name: restart ssh
+  systemd:
+    name: sshd
+    state: restarted

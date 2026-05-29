@@ -1,0 +1,36 @@
+Generiere einen Lessons-Learned-Report fuer das Cyber-Range-Lab.
+
+## Spiel-Daten
+- Datum: {{ game_date }}
+- Spielzeit: {{ duration_hours }} Stunden
+- Red-Team: {{ red_team_size }} Spieler
+- Blue-Team: {{ blue_team_size }} Spieler
+
+## Wazuh-Alert-Statistik
+Gesamt-Alerts: {{ total_alerts }}
+{% for alert in alert_stats %}
+- Rule {{ alert.rule_id }} ({{ alert.name }}): {{ alert.count }} Trigger, {{ alert.investigated }} investigated ({{ (alert.investigated / alert.count * 100) | round }}%)
+{% endfor %}
+
+## Verpasste Alerts (Critical Misses)
+{% for miss in critical_misses %}
+- Phase {{ miss.phase }}: {{ miss.description }}
+{% endfor %}
+
+## Phasen-Fortschritt
+{% for phase in phase_progress %}
+- Phase {{ phase.id }} ({{ phase.name }}): Red erreicht {{ phase.red_reached }}, Blue erkannt {{ phase.blue_detected }}
+{% endfor %}
+
+## Spieler-Statistiken (aus Honcho)
+{% for player in player_stats %}
+- {{ player.name }} ({{ player.team }}): Skill {{ player.skill_level }}, Hints {{ player.hints_received }}, Helpful {{ (player.helpful_ratio * 100) | round }}%
+{% endfor %}
+
+Bitte erstelle:
+1. Executive Summary (DE)
+2. MITRE-ATT&CK-Heatmap (Tabelle, DE)
+3. Detection-Rule-Trigger-Statistik (Tabelle, DE)
+4. Was Blue verpasst hat (kritische Fehlalarme, DE)
+5. Was Red gut gemacht hat (DE)
+6. Empfehlungen fuer naechsten Run (DE)

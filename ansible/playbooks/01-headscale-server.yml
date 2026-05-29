@@ -1,0 +1,116 @@
+# 01-headscale-server.yml
+# Installiert Headscale (Tailnet-Control-Plane) auf Hetzner-CX22 (10.99.40.3)
+# + nginx Reverse-Proxy fuer OIDC (Port 443)
+# + Pre-Auth-Key-Logik via Cron
+#
+# Firewall-Regeln (Bereits in terraform/firewall.tf):
+#   Port 443 (HTTPS/OIDC) — public
+#   Port 3478 (STUN) — public
+#   Port 8080 (Control-Plane) — intern (10.99.0.0/24)
+---
+- name: Headscale-Server auf Hetzner-VM einrichten
+  hosts: lab-headscale
+  become: yes
+  vars:
+    headscale_version: "0.23.1"
+    headscale_user: "headscale"
+    headscale_group: "headscale"
+    headscale_config_dir: "/etc/headscale"
+    headscale_data_dir: "/var/lib/headscale"
+    tailnet_prefix: "100.64.0.0/10"
+    dns_base_domain: "cyber-range.lab"
+    server_url: "https://{{ ansible_default_ipv4.address }}:443"
+
+  tasks:
+    - name: System-Pakete installieren
+      apt:
+        name:
+          - curl
+          - wget
+          - gnupg
+          - nginx
+          - certbot
+          - python3-certbot-nginx
+          - ufw
+          - jq
+        state: present
+        update_cache: yes
+
+    - name: Headscale-Systembenutzer anlegen
+      user:
+        name: "{{ headscale_user }}"
+        group: "{{ headscale_group }}"
+        system: yes
+        create_home: no
+        shell: /usr/sbin/nologin
+        state: present
+
+    - name: Headscale-Verzeichnisse vorbereiten
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ headscale_user }}"
+        group: "{{ headscale_group }}"
+        mode: 0755
+      loop:
+        - "{{ headscale_config_dir }}"
+        - "{{ headscale_data_dir }}"
+
+    - name: Headscale-Binaer herunterladen
+      get_url:
+        url: "https://github.com/juanfont/headscale/releases/download/v{{ headscale_version }}/headscale_{{ headscale_version }}_linux_amd64.deb"
+        dest: "/tmp/headscale_{{ headscale_version }}_linux_amd64.deb"
+        checksum: "sha256:https://github.com/juanfont/headscale/releases/download/v{{ headscale_version }}/headscale_{{ headscale_version }}_linux_amd64.deb.sha256"
+
+    - name: Headscale-Paket installieren
+      apt:
+        deb: "/tmp/headscale_{{ headscale_version }}_linux_amd64.deb"
+      notify: restart headscale
+
+    - name: Headscale-Konfiguration schreiben
+      template:
+        src: templates/headscale-config.yaml.j2
+        dest: "{{ headscale_config_dir }}/config.yaml"
+        owner: "{{ headscale_user }}"
+        group: "{{ headscale_group }}"
+        mode: 0644
+      notify: restart headscale
+
+    - name: Headscale-ACL-Datei kopieren
+      copy:
+        src: "{{ playbook_dir }}/../../docs/acl.hujson"
+        dest: "{{ headscale_config_dir }}/acl.hujson"
+        owner: "{{ headscale_user }}"
+        group: "{{ headscale_group }}"
+        mode: 0644
+      notify: restart headscale
+
+    - name: Headscale-Systemd-Service aktivieren + starten
+      systemd:
+        name: headscale
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+    - name: Pre-Auth-Key-Generator-Script kopieren
+      copy:
+        src: "{{ playbook_dir }}/../../scripts/gen-preauth-keys.sh"
+        dest: "/usr/local/bin/gen-preauth-keys.sh"
+        owner: root
+        group: root
+        mode: 0755
+
+    - name: Pre-Auth-Key-Cron-Job einrichten (std 08:00 Spieltag)
+      cron:
+        name: "Generate pre-auth-keys fuer Headscale"
+        minute: "0"
+        hour: "8"
+        job: "/usr/local/bin/gen-preauth-keys.sh --expiry 72h --reusable false > /var/log/headscale-preauth.log 2>&1"
+        state: present
+
+  handlers:
+    - name: restart headscale
+      systemd:
+        name: headscale
+        state: restarted
+        daemon_reload: yes

@@ -1,0 +1,53 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+*.tfvars
+!terraform.tfvars.example
+
+# Secrets
+secrets/
+*.pem
+*.key
+*.crt
+.env
+.env.local
+
+# DSGVO-relevante lokale Files (Klarnamen, persoenliche Daten)
+terraform/participants.local.yml
+terraform/ssh-keys.local.yml
+!terraform/participants.local.yml.example
+
+# Spieltag-Zugangsdaten (Klartext-Credentials — NIE committen)
+briefings/*.local.md
+
+# Ansible
+*.retry
+inventory.ini
+inventory.yml
+!inventory.tmpl
+
+# Hermes-Skill local state
+hermes-gm-skill/.local/
+hermes-gm-skill/sessions/
+
+# Lessons Learned mit Realnamen
+lessons-learned/2026-*
+!lessons-learned/_template.md
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Editor
+.vscode/
+.idea/
+
+# Build artifacts
+dist/
+build/
+*.log

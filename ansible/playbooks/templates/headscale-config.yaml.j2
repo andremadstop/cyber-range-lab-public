@@ -1,0 +1,38 @@
+# Headscale-Konfiguration fuer Cyber-Range-Lab
+# Generiert von Ansible — nicht manuell editieren!
+---
+server_url: {{ server_url }}
+listen_addr: 0.0.0.0:8080
+metrics_listen_addr: 0.0.0.0:9090
+grpc_listen_addr: 0.0.0.0:50443
+grpc_allow_insecure: false
+
+# Private Netzwerk-IPs: 100.64.0.0/10 (RFC 6598, Tailscale-Default)
+ip_prefixes:
+  - 100.64.0.0/10
+
+# DNS-Konfiguration
+dns_config:
+  base_domain: {{ dns_base_domain }}
+  magic_dns: true
+  override_local_dns: false
+  nameservers:
+    - 1.1.1.1
+    - 9.9.9.9
+
+# ACL-Datei (siehe docs/acl.hujson)
+acl_policy_path: /etc/headscale/acl.hujson
+
+# Pre-Auth-Keys: nicht wiederverwendbar, 72h gueltig
+preauth_key_expiry: 72h
+
+# Datenbank
+db_type: sqlite3
+db_path: /var/lib/headscale/db.sqlite
+
+# Logging
+log_level: info
+log_file: /var/log/headscale.log
+
+# Keine Auto-Registrierung — nur via Pre-Auth-Key
+randomize_client_port: true

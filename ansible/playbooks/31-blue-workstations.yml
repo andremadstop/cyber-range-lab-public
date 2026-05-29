@@ -1,0 +1,99 @@
+---
+# 31-blue-workstations.yml — Blue-Team-Workstations (SIFT-Tools)
+# 3x blue-ws-* (10.99.20.3-5)
+# Basis: Debian 12 + Forensik-Tools
+- name: Blue-Workstations einrichten
+  hosts: blue-ws
+  become: yes
+  vars:
+    sift_tools:
+      - volatility3
+      - wireshark
+      - tshark
+      - zeek
+      - jq
+      - curl
+      - wget
+      - tmux
+      - vim
+      - netcat-openbsd
+      - python3-pip
+      - python3-venv
+      - git
+      - openssh-client
+      - dnsutils
+      - tcpdump
+      - nmap
+      - whois
+      - inetutils-traceroute
+
+  tasks:
+    - name: System aktualisieren
+      apt:
+        update_cache: yes
+        upgrade: dist
+      changed_when: false
+
+    - name: SIFT-Basispakete installieren
+      apt:
+        name: "{{ sift_tools }}"
+        state: present
+        update_cache: yes
+      register: tools_install
+      until: tools_install is success
+      retries: 3
+      delay: 5
+
+    - name: Sigmal-CLI installieren (Sigma-Regeln nach Wazuh portieren)
+      pip:
+        name:
+          - pySigma
+          - pySigma-backend-wazuh
+        executable: pip3
+      ignore_errors: yes
+
+    - name: Zeek installieren (falls nicht in apt)
+      apt:
+        name:
+          - zeek
+          - zeekctl
+        state: present
+      register: zeek_apt
+      ignore_errors: yes
+
+    - name: Zeek als Docker fallback
+      command:
+        cmd: docker run -d --name zeek --restart unless-stopped --network host zeek/zeek:latest zeek -i eth0
+      when: zeek_apt is failed
+      ignore_errors: yes
+      failed_when: false
+
+    - name: Blue-Team-MOTD
+      copy:
+        dest: /etc/motd
+        content: |
+          ╔═══════════════════════════════════════════════╗
+          ║    CYBER-RANGE-LAB — BLUE TEAM WORKSTATION    ║
+          ╠═══════════════════════════════════════════════╣
+          ║ IP: {{ ansible_default_ipv4.address }}         ║
+          ║ Wazuh-Dashboard: https://10.99.20.2           ║
+          ║                                                ║
+          ║ Verfuegbare Tools:                             ║
+          ║   volatility3 — Memory-Forensik               ║
+          ║   wireshark/tshark — Packet-Capture           ║
+          ║   zeek — Network-Monitoring                   ║
+          ║   sigmac — Sigma-Regel-Kompilierung           ║
+          ║   tcpdump/nmap — Network-Diagnostics          ║
+          ║   jq — JSON-Processing                        ║
+          ╚═══════════════════════════════════════════════╝
+        mode: 0644
+
+    - name: TMUX-Konfiguration
+      copy:
+        dest: /root/.tmux.conf
+        content: |
+          set -g default-terminal "screen-256color"
+          set -g mouse on
+          bind | split-window -h
+          bind - split-window -v
+        mode: 0644

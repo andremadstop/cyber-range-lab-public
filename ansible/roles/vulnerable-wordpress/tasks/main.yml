@@ -1,0 +1,166 @@
+---
+# Role: vulnerable-wordpress
+# Installiert WordPress 5.4 + Slider Revolution 4.1 (CVE-2014-9734)
+# + Juice Shop via Docker Compose auf dem Web-Target (10.99.10.2)
+
+- name: Docker-Abhängigkeiten installieren
+  apt:
+    name:
+      - docker.io
+      - docker-compose-v2
+      - python3-docker
+      - python3-requests
+    state: present
+    update_cache: yes
+
+- name: Docker-Dienst aktivieren
+  systemd:
+    name: docker
+    enabled: yes
+    state: started
+
+- name: Dienstverzeichnis anlegen
+  file:
+    path: "/opt/{{ item.name }}"
+    state: directory
+    owner: root
+    group: root
+    mode: 0755
+  loop:
+    - { name: "juice-shop" }
+    - { name: "wordpress-vuln" }
+
+- name: Juice-Shop Docker-Compose bereitstellen
+  copy:
+    dest: "/opt/juice-shop/docker-compose.yml"
+    content: |
+      services:
+        juice-shop:
+          image: bkimminich/juice-shop:v16.0.0
+          container_name: juice-shop
+          restart: unless-stopped
+          ports:
+            - "10.99.10.2:3000:3000"
+          networks:
+            - lab-net
+      networks:
+        lab-net:
+          driver: bridge
+    mode: 0644
+
+- name: WordPress-vuln Docker-Compose bereitstellen (WP 5.4 + Slider Rev 4.1)
+  copy:
+    dest: "/opt/wordpress-vuln/docker-compose.yml"
+    content: |
+      services:
+        db:
+          image: mysql:5.7
+          container_name: wp-db
+          restart: unless-stopped
+          environment:
+            MYSQL_ROOT_PASSWORD: rootpassword123
+            MYSQL_DATABASE: wordpress
+            MYSQL_USER: wpuser
+            MYSQL_PASSWORD: wppass123
+          volumes:
+            - db_data:/var/lib/mysql
+          networks:
+            - lab-net
+
+        wordpress:
+          image: wordpress:5.4
+          container_name: wp-app
+          restart: unless-stopped
+          depends_on:
+            - db
+          ports:
+            - "10.99.10.2:8080:80"
+          environment:
+            WORDPRESS_DB_HOST: db:3306
+            WORDPRESS_DB_USER: wpuser
+            WORDPRESS_DB_PASSWORD: wppass123
+            WORDPRESS_DB_NAME: wordpress
+          volumes:
+            - wp_data:/var/www/html
+            - ./slider-revolution:/var/www/html/wp-content/plugins/revslider
+          networks:
+            - lab-net
+
+      volumes:
+        db_data:
+        wp_data:
+
+      networks:
+        lab-net:
+          driver: bridge
+    mode: 0644
+
+- name: Slider-Revolution-Plugin-Verzeichnis vorbereiten
+  file:
+    path: "/opt/wordpress-vuln/slider-revolution"
+    state: directory
+    owner: root
+    group: root
+    mode: 0755
+
+- name: Slider-Revolution 4.1 aus Vulhub-Template deployen
+  copy:
+    dest: "/opt/wordpress-vuln/slider-revolution/revslider.php"
+    content: |
+      <?php
+      /**
+       * Plugin Name: Slider Revolution
+       * Plugin URI: https://revolution.themepunch.com/
+       * Description: Vulnerable Slider Revolution 4.1 (CVE-2014-9734)
+       * Version: 4.1.0
+       * Author: ThemePunch
+       */
+      // Vulnerable: Arbitrary file upload via ajax_req
+      add_action('wp_ajax_revslider_ajax', 'revslider_ajax_req');
+      function revslider_ajax_req() {
+        if (isset($_FILES['img'])) {
+          $target = wp_upload_dir()['basedir'] . '/revslider/';
+          if (!file_exists($target)) mkdir($target, 0777, true);
+          move_uploaded_file($_FILES['img']['tmp_name'], $target . $_FILES['img']['name']);
+          echo 'File uploaded to: ' . $target . $_FILES['img']['name'];
+        }
+      }
+    mode: 0644
+
+- name: Juice-Shop starten
+  command:
+    cmd: docker compose up -d
+    chdir: /opt/juice-shop
+  register: juice_up
+  changed_when: "'Container juice-shop  Started' in juice_up.stdout or 'Started' in juice_up.stdout"
+  failed_when: false
+
+- name: WordPress-Dienste starten
+  command:
+    cmd: docker compose up -d
+    chdir: /opt/wordpress-vuln
+  register: wp_up
+  changed_when: "'Started' in wp_up.stdout or 'Container' in wp_up.stdout"
+  failed_when: false
+
+- name: Auf Juice-Shop warten
+  uri:
+    url: "http://10.99.10.2:3000"
+    status_code: 200
+    timeout: 120
+  register: juice_shop_check
+  retries: 10
+  delay: 6
+  until: juice_shop_check.status == 200
+  ignore_errors: yes
+
+- name: Auf WordPress warten
+  uri:
+    url: "http://10.99.10.2:8080"
+    status_code: [200, 302]
+    timeout: 120
+  register: wp_check
+  retries: 10
+  delay: 6
+  until: wp_check.status in [200, 302]
+  ignore_errors: yes

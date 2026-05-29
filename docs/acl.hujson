@@ -1,0 +1,61 @@
+// Cyber-Range-Lab Headscale ACL
+// Spieltag-Spezifische Zugriffskontrolle:
+//   RED  → DMZ: allow (Angriff)
+//   RED  → BLUE: deny (Cheat-Schutz)
+//   BLUE → DMZ: SSH+ICMP (Forensik)
+//   BLUE → WAZUH: HTTPS (Dashboard)
+//   GM   → ALL: allow (Spielleiter)
+//
+// Hinweis: Diese ACL ergaenzt die Hetzner-Cloud-Firewall auf
+// Anwendungsebene. Die Firewall blockt bereits auf Netzwerkebene —
+// diese ACL ist zusaetzliche Absicherung im Tailnet.
+
+{
+  // ACLs: tag-basierte Zugriffsregeln
+  "acls": [
+    // RED → DMZ: Angriff erlaubt (explizit)
+    {"action": "accept", "src": ["tag:red"], "dst": ["tag:dmz:*"]},
+
+    // BLUE → DMZ: Nur SSH + ICMP (Forensik)
+    {"action": "accept", "src": ["tag:blue"], "dst": ["tag:dmz:22"]},
+    {"action": "accept", "src": ["tag:blue"], "dst": ["tag:dmz:icmp"]},
+
+    // BLUE → WAZUH: HTTPS-Dashboard
+    {"action": "accept", "src": ["tag:blue"], "dst": ["tag:wazuh:443"]},
+
+    // GM → ALL: Spielleiter sieht alles
+    {"action": "accept", "src": ["tag:game-master"], "dst": ["*:*"]},
+
+    // ALL → Headscale: Control-Plane (intern)
+    {"action": "accept", "src": ["tag:red", "tag:blue", "tag:game-master", "tag:dmz"],
+     "dst": ["tag:headscale:8080"]},
+
+    // Standard: deny all (explizit, sicherheitshalber)
+    {"action": "accept", "src": ["tag:red"], "dst": ["tag:red:*"]},
+    {"action": "accept", "src": ["tag:blue"], "dst": ["tag:blue:*"]},
+  ],
+
+  // Tags fuer Host-Zuweisung (werden via Headscale-CLI gesetzt)
+  "tagOwners": {
+    "tag:red":         ["andre"],
+    "tag:blue":        ["andre"],
+    "tag:dmz":         ["andre"],
+    "tag:wazuh":       ["andre"],
+    "tag:game-master": ["andre"],
+    "tag:headscale":   ["andre"],
+  },
+
+  // SSH-Eigenschaften fuer Tailscale-Serve/Funnel
+  "ssh": [],
+
+  // Hosts-Definitionen (optional, fuer Lesbarkeit)
+  "hosts": {
+    "web-target":    "100.64.10.2",
+    "vault-target":  "100.64.10.3",
+    "linux-victim":  "100.64.10.4",
+    "wazuh-siem":    "100.64.20.2",
+    "kali-andre":    "100.64.30.2",
+    "hermes-gm":     "100.64.40.2",
+    "lab-headscale": "100.64.40.3",
+  },
+}

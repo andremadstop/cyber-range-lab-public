@@ -1,0 +1,50 @@
+---
+# 40-headscale-enroll.yml — Enrolled alle Workstations ins Lab-Tailnet
+# Wird NACH Headscale-Setup ausgefuehrt (benoetigt Pre-Auth-Key)
+# Tailscale-Installation + Verbindung zum Lab-Headscale (10.99.40.3:443)
+- name: Workstations ins Lab-Tailnet enrollen
+  hosts: kali-andre, kali-user, blue-ws
+  become: yes
+  vars:
+    headscale_url: "https://10.99.40.3:443"
+    preauth_key: "{{ lookup('env', 'HEADSCALE_PREAUTH_KEY') | default('', true) }}"
+
+  tasks:
+    - name: Tailscale-Repository einbinden
+      copy:
+        dest: /etc/apt/sources.list.d/tailscale.list
+        content: |
+          deb https://pkgs.tailscale.com/stable/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} main
+        mode: 0644
+
+    - name: Tailscale-GPG-Key importieren
+      apt_key:
+        url: https://pkgs.tailscale.com/stable/{{ ansible_distribution | lower }}/{{ ansible_distribution_release }}.asc
+        state: present
+      register: gpg_key_import
+      ignore_errors: yes
+
+    - name: Tailscale installieren
+      apt:
+        name: tailscale
+        state: present
+        update_cache: yes
+      register: tailscale_install
+
+    - name: Pre-Auth-Key pruefen
+      fail:
+        msg: "HEADSCALE_PREAUTH_KEY ist nicht gesetzt. Setze Umgebungsvariable vor Playbook-Run."
+      when: preauth_key == ""
+
+    - name: Tailscale mit Lab-Headscale verbinden
+      command:
+        cmd: "tailscale up --login-server={{ headscale_url }} --auth-key={{ preauth_key }} --accept-routes --hostname={{ inventory_hostname }}"
+      register: tailscale_up
+      changed_when: "'Success' in tailscale_up.stdout"
+      failed_when: false
+
+    - name: Tailscale-Status pruefen
+      command:
+        cmd: tailscale status
+      register: tailscale_status
+      changed_when: false

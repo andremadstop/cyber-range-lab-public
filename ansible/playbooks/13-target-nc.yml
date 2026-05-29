@@ -1,0 +1,9 @@
+---
+# 13-target-nc.yml — NC-Target (10.99.10.5)
+# Installiert Nextcloud 28 mit schwachem Admin-PW + Dummy-Kundendaten
+# fuer Red-Team Angriffspfad: Credential-Access, Data-Exfiltration
+- name: NC-Target einrichten
+  hosts: nc-target
+  become: yes
+  roles:
+    - nextcloud-victim
